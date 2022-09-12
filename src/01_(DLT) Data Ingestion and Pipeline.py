@@ -24,7 +24,7 @@
 # MAGIC 
 # MAGIC **Full Architecture from Ingestion to Analytics and Machine Learning**
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v0/master/Images/Telco_fullpipeline.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Full_v2.png" width="1000"/>
 
 # COMMAND ----------
 
@@ -62,7 +62,7 @@ PCMD_schema = "dbfs:/tmp/tomasz.bacewicz@databricks.com/PCMD_schema/"
 # MAGIC 
 # MAGIC * Ingestion here starts with loading CDR and PCMD data directly from S3 using Autoloader. Though in this example JSON files are loaded into S3 from where Autoloader will then ingest these files into the bronze layer, streams from Kafka, Kinesis, etc. are supported by simply changing the "format" option on the read operation.
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v0/master/Images/Telco_bronze.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Bronze_v2.png?token=GHSAT0AAAAAABRG5BOEJYYCPT4PZ36K2QY2YYE6N4A" width="1000"/>
 
 # COMMAND ----------
 
@@ -119,7 +119,7 @@ def pcmd_stream_bronze():
 # MAGIC 
 # MAGIC * In the silver layer, the data is refined removing nulls and duplicates while also joining tower information such as state, longitude, and latitude to allow for geospatial analysis. Stream-static joins are performed to do this with the streaming CDR and PCMD records being joined with static tower information which has been stored previously.
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v0/master/Images/Telco_silver.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Silver_v2.png" width="1000"/>
 
 # COMMAND ----------
 
@@ -179,9 +179,9 @@ def pcmd_stream_silver():
 
 # MAGIC %md
 # MAGIC ## Aggregating on Various Time Periods to Create the Gold Layer
-# MAGIC With Spark **Structured Streaming** the streaming records can be automatically aggregated with stateful processing. Here the aggregation is done on 1 minute intervals and the KPIs are aggregated accordingly. Any interval can be selected here and larger time window aggregations can be done on a scheduled basis with Databricks **Workflows**. For example,, the records that are aggregated here at 1 minute intervals can then be aggregated to hour long intervals with a workflow that runs every hour. 
+# MAGIC With Spark **Structured Streaming** the streaming records can be automatically aggregated with stateful processing. Here the aggregation is done on 1 minute intervals and the KPIs are aggregated accordingly. Any interval can be selected here and larger time window aggregations can be done on a scheduled basis with Databricks **Workflows**. For example, the records that are aggregated here at 1 minute intervals can then be aggregated to hour long intervals with a workflow that runs every hour. 
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v0/master/Images/Telco_gold.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Gold_v2.png" width="1000"/>
 
 # COMMAND ----------
 
@@ -321,6 +321,12 @@ def PCMD_stream_minute_gold():
                                                                                         "State")
   
   return df_pcmd_pivot_on_status_grouped_tower_ordered
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Aggregating on Larger Time Windows Through Scheduled Batch Workflows
+# MAGIC Though not shown in this notebook, the aggregations created on the minute level can now be aggregated to an hourly or daily basis. Higher level aggregations such as hourly make it easier for data scientists to train machine learning models with meaningful data. Daily aggregations can be valueable to analysts who need to observe the historical trends of network performance.
 
 # COMMAND ----------
 
