@@ -7,9 +7,8 @@
 # MAGIC 
 # MAGIC 
 # MAGIC 
-# MAGIC The modern telecommunications network consists of the **eNodeB (Evolved Node B)** is the hardware that communicates directly with the **UE (User Enitity such as a Mobile Phone)**. The **MME (Mobility Management Entity)** manages the entire process from a cell phone making a connection to a network to a paging message being sent to the mobile phone.  
-# MAGIC 
-# MAGIC <img style="margin-left: 500px" src="https://raw.githubusercontent.com/tomaszb-db/telco_v0/master/Images/LTE_architecture.png" width="700"/>
+# MAGIC The modern telecommunications network consists of the Base Station also known as the **eNodeB (Evolved Node B)** is the hardware that communicates directly with the **UE (User Enitity such as a Mobile Phone)**. The **MME (Mobility Management Entity)** manages the entire process from a cell phone making a connection to a network to a paging message being sent to the mobile phone.  
+# MAGIC <img style="margin: auto" src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco%20Simple.png" width="700"/>
 # MAGIC 
 # MAGIC **Use Case Overview**
 # MAGIC * Telecommunications services collect many different forms of data to observe overall network reliability as well as to predict how best to expand the network to reach more customers. Some typical types of data collected are:
@@ -83,18 +82,6 @@ def cdr_stream_bronze():
 
 # COMMAND ----------
 
-@dlt.table(comment="RSSI Stream - Bronze")
-def rssi_stream_bronze():
-  return spark.readStream.format("cloudFiles")  \
-          .option("cloudFiles.format", 'json')  \
-          .option('header', 'false') \
-          .option("mergeSchema", "true")         \
-          .option("cloudFiles.inferColumnTypes", "true") \
-          .option("cloudFiles.schemaLocation", RSSI_schema) \
-          .load(RSSI_dir)
-
-# COMMAND ----------
-
 @dlt.table(comment="PCMD Stream - Bronze")
 def pcmd_stream_bronze():
   return spark.readStream.format("cloudFiles")  \
@@ -149,16 +136,6 @@ def cdr_stream_silver():
 
 # MAGIC %sql
 # MAGIC SELECT * FROM geospatial_tomasz.cdr_stream_silver_static
-
-# COMMAND ----------
-
-@dlt.table(comment="RSSI Stream - Silver (Tower Info Added)")
-def rssi_stream_silver():
-  #get static tower data
-  df_towers = dlt.read("static_tower_data")
-  
-  df_rssi_bronze = dlt.read_stream("rssi_stream_bronze")
-  return df_rssi_bronze.join(df_towers, df_rssi_bronze.towerId == df_towers.GlobalID)
 
 # COMMAND ----------
 
@@ -226,54 +203,6 @@ def cdr_stream_minute_gold():
   
   return df_cdr_pivot_on_status_grouped_tower_ordered
 
-
-# COMMAND ----------
-
-@dlt.table(comment="Aggregate RSSI Stream - Gold (by Minute)")
-def RSSI_stream_minute_gold():
-  df_rssi_silver = dlt.read_stream("rssi_stream_silver")
-  
-  df_rssi_pivot_on_status_grouped_tower = df_rssi_silver  \
-                                                    .groupBy(F.window("event_ts", "1 minute"), "towerId") \
-                                                    .agg(F.avg(F.col("RSRP")).alias("avg_RSRP"), \
-                                                    F.avg(F.col("RSRQ")).alias("avg_RSRQ"), \
-                                                    F.avg(F.col("SINR")).alias("avg_SINR"), \
-                                                    F.max(F.col("RSRP")).alias("max_RSRP"), \
-                                                    F.max(F.col("RSRQ")).alias("max_RSRQ"), \
-                                                    F.max(F.col("SINR")).alias("max_SINR"), \
-                                                    F.min(F.col("RSRP")).alias("min_RSRP"), \
-                                                    F.min(F.col("RSRQ")).alias("min_RSRQ"), \
-                                                    F.min(F.col("SINR")).alias("min_SINR"), \
-                                                    F.count(F.lit(1)).alias("totalRecords_RSSI"),
-                                                    F.first("window.start").alias("window_start"), \
-                                                    F.first("Longitude").alias("Longitude"),       \
-                                                    F.first("Latitude").alias("Latitude"),         \
-                                                    F.first("City").alias("City"),                 \
-                                                    F.first("County").alias("County"),             \
-                                                    F.first("State").alias("state"))              \
-                                                    .withColumn("date", F.col("window_start"))
-  
-  
-  df_rssi_pivot_on_status_grouped_tower_ordered = df_rssi_pivot_on_status_grouped_tower.select("date",  \
-                                                                                        "towerId", 
-                                                                                        "avg_RSRP", \
-                                                                                        "avg_RSRQ", \
-                                                                                        "avg_SINR", \
-                                                                                        "max_RSRP", \
-                                                                                        "max_RSRQ", \
-                                                                                        "max_SINR", \
-                                                                                        "min_RSRP", \
-                                                                                        "min_RSRQ", \
-                                                                                        "min_SINR", \
-                                                                                        "totalRecords_RSSI", \
-                                                                                        "Latitude", \
-                                                                                        "Longitude",\
-                                                                                        "City",     \
-                                                                                        "County",   \
-                                                                                        "State")
-                                                                                      
-  
-  return df_rssi_pivot_on_status_grouped_tower_ordered
 
 # COMMAND ----------
 

@@ -16,6 +16,7 @@
 import pandas as pd
 from prophet import Prophet
 import logging
+import pyspark.sql.functions as F
 
 logging.getLogger('py4j').setLevel(logging.ERROR)
 
@@ -294,8 +295,8 @@ def isAnomoly(df_current):
   
   #anomoly logic
   df_current_plus_forecast = df_current.join(df_forecast, ["towerId"])
-  df_current_plus_forecast_with_anomoly = df_current_plus_forecast
-                                                     .withColumn("anomoly", anomolyDetectUDF(F.col("totalRecords_CDR"), F.col("yhat_lower"), F.col("yhat_upper")))
+  df_current_plus_forecast_with_anomoly = df_current_plus_forecast \
+                                                     .withColumn("anomoly", anomolyDetectUDF(F.col("totalRecords_CDR"), F.col("yhat_lower"), F.col("yhat_upper"))) \
                                                      .withColumn("anomoly_importance", anomolyImportanceUDF(F.col("totalRecords_CDR"), F.col("yhat_lower"), F.col("yhat_upper")))
   
   return df_current_plus_forecast_with_anomoly
