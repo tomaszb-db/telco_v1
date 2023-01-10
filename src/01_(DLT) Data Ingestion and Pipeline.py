@@ -1,4 +1,8 @@
 # Databricks notebook source
+dbutils.widgets.dropdown("reset_all_data", "false", ["true", "false"], "Reset all data")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Telecommunications Reliability Metrics
 # MAGIC 
@@ -8,7 +12,7 @@
 # MAGIC 
 # MAGIC 
 # MAGIC The modern telecommunications network consists of the Base Station also known as the **eNodeB (Evolved Node B)** is the hardware that communicates directly with the **UE (User Enitity such as a Mobile Phone)**. The **MME (Mobility Management Entity)** manages the entire process from a cell phone making a connection to a network to a paging message being sent to the mobile phone.  
-# MAGIC <img style="margin: auto" src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco%20Simple.png" width="700"/>
+# MAGIC <img style="margin: auto" src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_simple.png" width="1200"/>
 # MAGIC 
 # MAGIC **Use Case Overview**
 # MAGIC * Telecommunications services collect many different forms of data to observe overall network reliability as well as to predict how best to expand the network to reach more customers. Some typical types of data collected are:
@@ -23,26 +27,11 @@
 # MAGIC 
 # MAGIC **Full Architecture from Ingestion to Analytics and Machine Learning**
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Full_v2.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Full_v3.png" width="1000"/>
 
 # COMMAND ----------
 
-import dlt
-import pyspark.sql.functions as F
-from pyspark.sql.types import *
-
-#table location definitions
-db_name = "geospatial_tomasz"
-cell_tower_table = "cell_tower_geojson"
-
-#locations of data streams
-CDR_dir = "dbfs:/tmp/tomasz.bacewicz@databricks.com/telco_CDR"
-RSSI_dir = "dbfs:/tmp/tomasz.bacewicz@databricks.com/telco_signal_strength"
-PCMD_dir = "dbfs:/tmp/tomasz.bacewicz@databricks.com/telco_PCMD"
-
-CDR_schema = "dbfs:/tmp/tomasz.bacewicz@databricks.com/CDR_schema/"
-RSSI_schema = "dbfs:/tmp/tomasz.bacewicz@databricks.com/RSSI_schema/"
-PCMD_schema = "dbfs:/tmp/tomasz.bacewicz@databricks.com/PCMD_schema/"
+# MAGIC %run ./_resources/00-setup $reset_all_data=$reset_all_data
 
 # COMMAND ----------
 
@@ -61,41 +50,41 @@ PCMD_schema = "dbfs:/tmp/tomasz.bacewicz@databricks.com/PCMD_schema/"
 # MAGIC 
 # MAGIC * Ingestion here starts with loading CDR and PCMD data directly from S3 using Autoloader. Though in this example JSON files are loaded into S3 from where Autoloader will then ingest these files into the bronze layer, streams from Kafka, Kinesis, etc. are supported by simply changing the "format" option on the read operation.
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Bronze_v2.png?token=GHSAT0AAAAAABRG5BOEJYYCPT4PZ36K2QY2YYE6N4A" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Bronze_v3.png?token=GHSAT0AAAAAABRG5BOEJYYCPT4PZ36K2QY2YYE6N4A" width="1000"/>
 
 # COMMAND ----------
 
+import dlt
+
 @dlt.table(comment="CDR Stream - Bronze")
 def cdr_stream_bronze():
-  return spark.readStream.format("cloudFiles")  \
-                          .option("cloudFiles.format", 'json') \
-                          .option('header', 'false')  \
-                          .option("mergeSchema", "true")         \
-                          .option("cloudFiles.inferColumnTypes", "true") \
-                          .option("cloudFiles.schemaLocation", CDR_schema) \
-                          .load(CDR_dir)
+  return (spark.readStream.format("cloudFiles")  
+                          .option("cloudFiles.format", 'json') 
+                          .option('header', 'false')  
+                          .option("mergeSchema", "true")         
+                          .option("cloudFiles.inferColumnTypes", "true") 
+                          .load("/Users/tomasz.bacewicz@databricks.com/field_demos/telco/CDR"))
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM geospatial_tomasz.cdr_stream_bronze_static
+# MAGIC SELECT * FROM CDR_hist_bronze
 
 # COMMAND ----------
 
 @dlt.table(comment="PCMD Stream - Bronze")
 def pcmd_stream_bronze():
-  return spark.readStream.format("cloudFiles")  \
-                          .option("cloudFiles.format", 'json') \
-                          .option('header', 'false')  \
-                          .option("mergeSchema", "true")         \
-                          .option("cloudFiles.inferColumnTypes", "true") \
-                          .option("cloudFiles.schemaLocation", PCMD_schema) \
-                          .load(PCMD_dir)
+  return (spark.readStream.format("cloudFiles")  
+                          .option("cloudFiles.format", 'json') 
+                          .option('header', 'false')  
+                          .option("mergeSchema", "true")         
+                          .option("cloudFiles.inferColumnTypes", "true") 
+                          .load("/Users/tomasz.bacewicz@databricks.com/field_demos/telco/PCMD"))
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM geospatial_tomasz.pcmd_stream_bronze_static
+# MAGIC SELECT * FROM PCMD_hist_bronze
 
 # COMMAND ----------
 
@@ -106,24 +95,34 @@ def pcmd_stream_bronze():
 # MAGIC 
 # MAGIC * In the silver layer, the data is refined removing nulls and duplicates while also joining tower information such as state, longitude, and latitude to allow for geospatial analysis. Stream-static joins are performed to do this with the streaming CDR and PCMD records being joined with static tower information which has been stored previously.
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Silver_v2.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Silver_v3.png" width="1000"/>
 
 # COMMAND ----------
 
 @dlt.view
 def static_tower_data():
-  df_towers = spark.sql("select * from {0}.{1}".format(db_name, cell_tower_table))
+  df_towers = spark.sql("select * from {0}.{1}".format("field_demos_telco", "cell_tower_geojson"))
   
-  return df_towers.select(df_towers.properties.GlobalID.alias("GlobalID"), df_towers.properties.LocCity.alias("City"), df_towers.properties.LocCounty.alias("County"), df_towers.properties.LocState.alias("State"), df_towers.geometry.coordinates[0].alias("Longitude"), df_towers.geometry.coordinates[1].alias("Latitude"))
+  return df_towers.select(
+                  df_towers.properties.GlobalID.alias("GlobalID"), 
+                  df_towers.properties.LocCity.alias("City"), 
+                  df_towers.properties.LocCounty.alias("County"), df_towers.properties.LocState.alias("State"), 
+                  df_towers.geometry.coordinates[0].alias("Longitude"), 
+                  df_towers.geometry.coordinates[1].alias("Latitude")
+                 )
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM geospatial_tomasz.cell_tower_geojson
+# MAGIC SELECT * FROM field_demos_telco.cell_tower_geojson
 
 # COMMAND ----------
 
+import pyspark.sql.functions as F
+
 @dlt.table(comment="CDR Stream - Silver (Tower Info Added)")
+@dlt.expect_or_drop("towerId", "towerId IS NOT NULL")
+@dlt.expect_or_drop("typeC", "typeC IS NOT NULL")
 def cdr_stream_silver():
   #get static tower data
   df_towers = dlt.read("static_tower_data")
@@ -135,11 +134,14 @@ def cdr_stream_silver():
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM geospatial_tomasz.cdr_stream_silver_static
+# MAGIC SELECT * FROM CDR_hist_silver
 
 # COMMAND ----------
 
 @dlt.table(comment="PCMD Stream - Silver (Tower Info Added)")
+@dlt.expect_or_drop("towerId", "towerId IS NOT NULL")
+@dlt.expect_or_drop("typeC", "ProcedureId IS NOT NULL")
+@dlt.expect("ProcedureDuration", "ProcedureDuration > 0")
 def pcmd_stream_silver():
   #get static tower data
   df_towers = dlt.read("static_tower_data")
@@ -150,7 +152,7 @@ def pcmd_stream_silver():
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM geospatial_tomasz.pcmd_stream_silver_static
+# MAGIC SELECT * FROM PCMD_hist_silver
 
 # COMMAND ----------
 
@@ -158,9 +160,11 @@ def pcmd_stream_silver():
 # MAGIC ## Aggregating on Various Time Periods to Create the Gold Layer
 # MAGIC With Spark **Structured Streaming** the streaming records can be automatically aggregated with stateful processing. Here the aggregation is done on 1 minute intervals and the KPIs are aggregated accordingly. Any interval can be selected here and larger time window aggregations can be done on a scheduled basis with Databricks **Workflows**. For example, the records that are aggregated here at 1 minute intervals can then be aggregated to hour long intervals with a workflow that runs every hour. 
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Gold_v2.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_Gold_v3.png" width="1000"/>
 
 # COMMAND ----------
+
+import pyspark.sql.functions as F
 
 @dlt.table(comment="Aggregate CDR Stream - Gold (by Minute)")
 def cdr_stream_minute_gold():
@@ -168,88 +172,106 @@ def cdr_stream_minute_gold():
   
   
   #add widget to choose time window
-  df_cdr_pivot_on_status_grouped_tower = df_cdr_silver \
-                                                    .groupBy(F.window("event_ts", "1 minute"), "towerId")\
-                                                    .agg(F.count(F.when(F.col("status") == "dropped", True)).alias("dropped"),   \
-                                                    F.count(F.when(F.col("status") == "answered", True)).alias("answered"), \
-                                                    F.count(F.when(F.col("status") == "missed", True)).alias("missed"),     \
-                                                    F.count(F.when(F.col("typeC") == "text", True)).alias("text"),           \
-                                                    F.count(F.when(F.col("typeC") == "call", True)).alias("call"),           \
-                                                    F.count(F.lit(1)).alias("totalRecords_CDR"),                            \
-                                                    F.first("window.start").alias("window_start"),                           \
-                                                    F.first("Longitude").alias("Longitude"),                                 \
-                                                    F.first("Latitude").alias("Latitude"),                                   \
-                                                    F.first("City").alias("City"),                                           \
-                                                    F.first("County").alias("County"),                                       \
-                                                    F.first("State").alias("state"))                                        \
-                                                    .withColumn("date", F.col("window_start"))                              
+  df_cdr_pivot_on_status_grouped_tower = (df_cdr_silver 
+                                                 .groupBy(F.window("event_ts", "1 minute"), "towerId")                       
+                                                 .agg(F.count(F.when(F.col("status") == "dropped", True)).alias("dropped"),   
+                                                    F.count(F.when(F.col("status") == "answered", True)).alias("answered"),     
+                                                    F.count(F.when(F.col("status") == "missed", True)).alias("missed"),         
+                                                    F.count(F.when(F.col("typeC") == "text", True)).alias("text"),              
+                                                    F.count(F.when(F.col("typeC") == "call", True)).alias("call"),              
+                                                    F.count(F.lit(1)).alias("totalRecords_CDR"),                               
+                                                    F.first("window.start").alias("window_start"),                              
+                                                    F.first("Longitude").alias("Longitude"),                                    
+                                                    F.first("Latitude").alias("Latitude"),                                      
+                                                    F.first("City").alias("City"),                                              
+                                                    F.first("County").alias("County"),                                          
+                                                    F.first("State").alias("state")
+                                                   )                                            
+                                                  .withColumn("date", F.col("window_start")))                              
   
 
 
   
-  df_cdr_pivot_on_status_grouped_tower_ordered = df_cdr_pivot_on_status_grouped_tower.select("date",     \
-                                                                                             "towerId",  \
-                                                                                             "answered", \
-                                                                                             "dropped",  \
-                                                                                             "missed",   \
-                                                                                             "call",     \
-                                                                                             "text",     \
-                                                                                             "totalRecords_CDR", \
-                                                                                             "Latitude", \
-                                                                                             "Longitude",\
-                                                                                             "City",     \
-                                                                                             "County",   \
-                                                                                             "State")
+  df_cdr_pivot_on_status_grouped_tower_ordered = (df_cdr_pivot_on_status_grouped_tower
+                                                                            .select("date",              
+                                                                                    "towerId",           
+                                                                                    "answered",          
+                                                                                    "dropped",           
+                                                                                    "missed",            
+                                                                                    "call",              
+                                                                                    "text",              
+                                                                                    "totalRecords_CDR",  
+                                                                                    "Latitude",          
+                                                                                    "Longitude",         
+                                                                                    "City",              
+                                                                                    "County",            
+                                                                                    "State"
+                                                                                   ))
   
   return df_cdr_pivot_on_status_grouped_tower_ordered
 
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC SELECT * FROM CDR_hist_gold
+
+# COMMAND ----------
+
+import pyspark.sql.functions as F
+
 @dlt.table(comment="Aggregate PCMD Stream - Gold (by Minute)")
 def PCMD_stream_minute_gold():
   df_pcmd_silver = dlt.read_stream("pcmd_stream_silver")
   
   #clean up the code
-  df_pcmd_pivot_on_status_grouped_tower = df_pcmd_silver \
-                                                    .groupBy(F.window("event_ts", "1 minute"), "towerId") \
-                                                    .agg(F.avg(F.when(F.col("ProcedureId") == "11", F.col("ProcedureDuration"))).alias("avg_dur_request_to_release_bearer"),  \
-                                                    F.avg(F.when(F.col("ProcedureId") == "15", F.col("ProcedureDuration"))).alias("avg_dur_notification_data_sent_to_UE"), \
-                                                    F.avg(F.when(F.col("ProcedureId") == "16", F.col("ProcedureDuration"))).alias("avg_dur_request_to_setup_bearer"), \
-                                                    F.max(F.when(F.col("ProcedureId") == "11", F.col("ProcedureDuration"))).alias("max_dur_request_to_release_bearer"),  \
-                                                    F.max(F.when(F.col("ProcedureId") == "15", F.col("ProcedureDuration"))).alias("max_dur_notification_data_sent_to_UE"), \
-                                                    F.max(F.when(F.col("ProcedureId") == "16", F.col("ProcedureDuration"))).alias("max_dur_request_to_setup_bearer"), \
-                                                    F.min(F.when(F.col("ProcedureId") == "11", F.col("ProcedureDuration"))).alias("min_dur_request_to_release_bearer"),  \
-                                                    F.min(F.when(F.col("ProcedureId") == "15", F.col("ProcedureDuration"))).alias("min_dur_notification_data_sent_to_UE"), \
-                                                    F.min(F.when(F.col("ProcedureId") == "16", F.col("ProcedureDuration"))).alias("min_dur_request_to_setup_bearer"), \
-                                                    F.count(F.lit(1)).alias("totalRecords_PCMD"), \
-                                                    F.first("window.start").alias("window_start"), \
-                                                    F.first("Longitude").alias("Longitude"),       \
-                                                    F.first("Latitude").alias("Latitude"),         \
-                                                    F.first("City").alias("City"),                 \
-                                                    F.first("County").alias("County"),             \
-                                                    F.first("State").alias("state"))              \
-                                                    .withColumn("date", F.col("window_start"))
+  df_pcmd_pivot_on_status_grouped_tower = (df_pcmd_silver 
+                                                  .groupBy(F.window("event_ts", "1 minute"), "towerId")                                                                     
+                                                  .agg(F.avg(F.when(F.col("ProcedureId") == "11", F.col("ProcedureDuration"))).alias("avg_dur_request_to_release_bearer"),  
+                                                    F.avg(F.when(F.col("ProcedureId") == "15", F.col("ProcedureDuration"))).alias("avg_dur_notification_data_sent_to_UE"),    
+                                                    F.avg(F.when(F.col("ProcedureId") == "16", F.col("ProcedureDuration"))).alias("avg_dur_request_to_setup_bearer"),         
+                                                    F.max(F.when(F.col("ProcedureId") == "11", F.col("ProcedureDuration"))).alias("max_dur_request_to_release_bearer"),       
+                                                    F.max(F.when(F.col("ProcedureId") == "15", F.col("ProcedureDuration"))).alias("max_dur_notification_data_sent_to_UE"),    
+                                                    F.max(F.when(F.col("ProcedureId") == "16", F.col("ProcedureDuration"))).alias("max_dur_request_to_setup_bearer"),         
+                                                    F.min(F.when(F.col("ProcedureId") == "11", F.col("ProcedureDuration"))).alias("min_dur_request_to_release_bearer"),       
+                                                    F.min(F.when(F.col("ProcedureId") == "15", F.col("ProcedureDuration"))).alias("min_dur_notification_data_sent_to_UE"),    
+                                                    F.min(F.when(F.col("ProcedureId") == "16", F.col("ProcedureDuration"))).alias("min_dur_request_to_setup_bearer"),         
+                                                    F.count(F.lit(1)).alias("totalRecords_PCMD"),                                                                             
+                                                    F.first("window.start").alias("window_start"),                                                                            
+                                                    F.first("Longitude").alias("Longitude"),                                                                                  
+                                                    F.first("Latitude").alias("Latitude"),                                                                                   
+                                                    F.first("City").alias("City"),                                                                                         
+                                                    F.first("County").alias("County"),             
+                                                    F.first("State").alias("state")
+                                                   )              
+                                                  .withColumn("date", F.col("window_start")))
   
-  df_pcmd_pivot_on_status_grouped_tower_ordered = df_pcmd_pivot_on_status_grouped_tower.select("date",  \
-                                                                                        "towerId", \
-                                                                                        "avg_dur_request_to_release_bearer", \
-                                                                                        "avg_dur_notification_data_sent_to_UE", \
-                                                                                        "avg_dur_request_to_setup_bearer", \
-                                                                                        "max_dur_request_to_release_bearer", \
-                                                                                        "max_dur_notification_data_sent_to_UE", \
-                                                                                        "max_dur_request_to_setup_bearer", \
-                                                                                        "min_dur_request_to_release_bearer", \
-                                                                                        "min_dur_notification_data_sent_to_UE", \
-                                                                                        "min_dur_request_to_setup_bearer", \
-                                                                                        "totalRecords_PCMD", \
-                                                                                        "Latitude", \
-                                                                                        "Longitude",\
-                                                                                        "City",     \
-                                                                                        "County",   \
-                                                                                        "State")
+  df_pcmd_pivot_on_status_grouped_tower_ordered = (df_pcmd_pivot_on_status_grouped_tower
+                                                                                .select("date",  
+                                                                                        "towerId", 
+                                                                                        "avg_dur_request_to_release_bearer", 
+                                                                                        "avg_dur_notification_data_sent_to_UE", 
+                                                                                        "avg_dur_request_to_setup_bearer", 
+                                                                                        "max_dur_request_to_release_bearer", 
+                                                                                        "max_dur_notification_data_sent_to_UE", 
+                                                                                        "max_dur_request_to_setup_bearer", 
+                                                                                        "min_dur_request_to_release_bearer", 
+                                                                                        "min_dur_notification_data_sent_to_UE", 
+                                                                                        "min_dur_request_to_setup_bearer", 
+                                                                                        "totalRecords_PCMD", 
+                                                                                        "Latitude", 
+                                                                                        "Longitude",
+                                                                                        "City",     
+                                                                                        "County",   
+                                                                                        "State"
+                                                                                      ))
   
   return df_pcmd_pivot_on_status_grouped_tower_ordered
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM PCMD_hist_gold
 
 # COMMAND ----------
 

@@ -5,7 +5,7 @@
 # MAGIC 
 # MAGIC To be more specific, call detail records which have been aggregated into a gold table on a daily basis will be used to predict each tower's future activity. A benefit for a telecommunications company in doing this would be to find and plan for where outages can be expected or where those outages might affect the most customers. Ultimately, having accurate predictions for the future by tower can increase quality of service for customers and consequently reduce churn. 
 # MAGIC 
-# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_ML_Forecasting.png" width="1000"/>
+# MAGIC <img src="https://raw.githubusercontent.com/tomaszb-db/telco_v1/master/Images/Telco_ML_Forecasting_v3.png" width="1000"/>
 # MAGIC 
 # MAGIC With the power of concurrent processing, we can easily scale our exploritory analysis and forecasting to data being generated from all the towers through horizontal scaling. 
 # MAGIC 
@@ -13,22 +13,12 @@
 
 # COMMAND ----------
 
-import pandas as pd
-from prophet import Prophet
-import logging
-import pyspark.sql.functions as F
-
-logging.getLogger('py4j').setLevel(logging.ERROR)
-
-db_name = "geospatial_tomasz"
-actualsHourlyGoldTable = "CDR_hour_gold"
-forecastTable_Hourly = "telco_forecast_hourly"
-anomolyTable_Hourly = "telco_anomly_hourly" #anomaly
+# MAGIC %run ./_resources/00-setup $reset_all_data=false
 
 # COMMAND ----------
 
 #querying a few towers to explore forecating
-towerIds = spark.sql("select towerId from geospatial_tomasz.CDR_day_gold group by towerId")
+towerIds = spark.sql("select towerId from CDR_day_gold_ml group by towerId")
 
 # COMMAND ----------
 
@@ -46,7 +36,7 @@ def fitForecastDaily(towerId_row):
   )
 
   #querying from the daily gold table to get total amount of activity by tower and date
-  df = spark.sql("select CAST(datetime as date) as ds, sum(totalRecords_CDR) as y from geospatial_tomasz.CDR_day_gold where year(datetime) = 2021 and towerId = '{}' group by ds".format(towerId))
+  df = spark.sql("select CAST(datetime as date) as ds, sum(totalRecords_CDR) as y from CDR_day_gold_ml where year(datetime) = 2021 and towerId = '{}' group by ds".format(towerId))
   
   #do the actual fit in Pandas
   pandas_df = df.toPandas()
@@ -107,7 +97,7 @@ plotModelDaily(modelsByTowerDaily[1])
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC select concat(dayofweek(datetime), "-", hour(datetime)) as day_hour, first(datetime) as datetime_, towerId, sum(totalRecords_CDR) from geospatial_tomasz.CDR_hour_gold where datetime >= "2021-07-11" and datetime < "2021-07-18" group by day_hour, towerId order by dayofweek(datetime_) asc, hour(datetime_) asc
+# MAGIC select concat(dayofweek(datetime), "-", hour(datetime)) as day_hour, first(datetime) as datetime_, towerId, sum(totalRecords_CDR) from CDR_hour_gold_ml where datetime >= "2021-07-11" and datetime < "2021-07-18" group by day_hour, towerId order by dayofweek(datetime_) asc, hour(datetime_) asc
 
 # COMMAND ----------
 
@@ -124,7 +114,7 @@ def fitForecastHourly(towerId_row):
   )
   
   #take a segment of two weeks with hour granularity
-  df = spark.sql("select datetime as ds, totalRecords_CDR as y from geospatial_tomasz.CDR_hour_gold where datetime >= '2021-06-27' and datetime < '2021-07-18' and towerId = '{}'".format(towerId))
+  df = spark.sql("select datetime as ds, totalRecords_CDR as y from CDR_hour_gold_ml where datetime >= '2021-06-27' and datetime < '2021-07-18' and towerId = '{}'".format(towerId))
   pandas_df = df.toPandas()
 
   model.fit(pandas_df)
@@ -229,7 +219,7 @@ sql_statement = '''
     towerId,
     datetime as ds,
     sum(totalRecords_CDR) as y
-  FROM geospatial_tomasz.CDR_hour_gold 
+  FROM CDR_hour_gold_ml 
   WHERE datetime >= '2021-06-27' and datetime < '2021-07-18'
   GROUP BY towerId, ds
   ORDER BY towerId, ds
@@ -248,15 +238,15 @@ results = (
     )
 
 #write results to table with a training_date column
-results.write.format("delta").mode("append").saveAsTable("{}.{}".format(db_name, forecastTable_Hourly))
+results.write.format("delta").mode("append").saveAsTable("CDR_hour_forecast")
 
 display(results)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ##(Optional) Anomoly Detection
-# MAGIC For the same of an example, we can also use our forecasting model to do basic anomoly detection. In the cell below, we can use the previously generated Delta table of a forecast for each tower to detect whether the most recent activity is out of the bounds of the forecasting confidence interval. Hence, we have a column named "anomoly" which determines whether the reading was out of the confidence interval (which currently is set at .95). 
+# MAGIC ##(Optional) Anomaly Detection
+# MAGIC For the same of an example, we can also use our forecasting model to do basic anomaly detection. In the cell below, we can use the previously generated Delta table of a forecast for each tower to detect whether the most recent activity is out of the bounds of the forecasting confidence interval. Hence, we have a column named "anomaly" which determines whether the reading was out of the confidence interval (which currently is set at .95). 
 # MAGIC 
 # MAGIC As an example, we can see on our previous forecasts where the actual lies outside of the prediction confidence interval.
 # MAGIC 
@@ -267,7 +257,7 @@ display(results)
 #now for anomoly detection
 #1) here we have a regular job every hour to calculate CDR metrics so that the last hour can be put through the anomoly detection function
 currentTimeWindow = '2021-07-18T00:00:00.000+0000'
-df_current = spark.sql("SELECT * FROM {}.{} WHERE datetime = '{}'".format(db_name, actualsHourlyGoldTable, currentTimeWindow))
+df_current = spark.sql("SELECT * FROM CDR_hour_gold_ml WHERE datetime = '{}'".format(currentTimeWindow))
 
 def anomolyDetectUDF_Func(actual, forecast_min, forecast_max):
   if actual < forecast_min or actual > forecast_max:
@@ -287,11 +277,11 @@ anomolyDetectUDF = F.udf(anomolyDetectUDF_Func)
 anomolyImportanceUDF = F.udf(anomolyImportanceUDF_Func)
 
 def isAnomoly(df_current):
-  mostRecentTraining = spark.sql("SELECT training_date FROM geospatial_tomasz.telco_forecast_hourly GROUP BY training_date ORDER BY training_date DESC LIMIT 1")
+  mostRecentTraining = spark.sql("SELECT training_date FROM CDR_hour_forecast GROUP BY training_date ORDER BY training_date DESC LIMIT 1")
   currentTrainingDatetime = mostRecentTraining.collect()[0]['training_date']
   currentTimeWindow = df_current.select(F.first("datetime")).collect()[0]["first(datetime)"]
   
-  df_forecast = spark.sql("SELECT * FROM {}.{} WHERE training_date = '{}' AND ds = '{}'".format(db_name, forecastTable_Hourly, currentTrainingDatetime, currentTimeWindow))
+  df_forecast = spark.sql("SELECT * FROM CDR_hour_forecast WHERE training_date = '{}' AND ds = '{}'".format(currentTrainingDatetime, currentTimeWindow))
   
   #anomoly logic
   df_current_plus_forecast = df_current.join(df_forecast, ["towerId"])

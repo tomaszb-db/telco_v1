@@ -11,13 +11,6 @@ CDR_table = "telco_CDR_ml"
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC --DROP TABLE geospatial_tomasz.telco_CDR_ml;
-# MAGIC --DROP TABLE geospatial_tomasz.CDR_day_gold
-# MAGIC --DROP TABLE geospatial_tomasz.CDR_hour_gold
-
-# COMMAND ----------
-
 import pyspark.sql.functions as F
 
 df_towers = spark.sql("select * from {0}.{1}".format(db_name, cell_tower_table))
@@ -34,10 +27,6 @@ globalIds = df_v_towers_denver_boulder.select(df_v_towers.properties["GlobalID"]
 
 #get subscriber ID to phone number mapping
 phone_numbers_df = spark.sql("select * from {}.{}".format(db_name, phone_numbers_table))
-
-# COMMAND ----------
-
-display(df_v_towers_denver_boulder)
 
 # COMMAND ----------
 
@@ -248,20 +237,13 @@ def createWindowTable(sourceTable, targetTable, windowTime, towersTable):
                                                                "County",   \
                                                                "State")
   
-  grouped_df_with_tower_ordered.write.format("delta").mode("append").saveAsTable("{}".format(targetTable))
+  grouped_df_with_tower_ordered.write.format("delta").mode("overwrite").saveAsTable("{}".format(targetTable))
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC --DROP TABLE geospatial_tomasz.CDR_day_gold
-# MAGIC --select * from geospatial_tomasz.CDR_hour_gold
-# MAGIC --DROP TABLE geospatial_tomasz.telco_CDR_ml
-
-# COMMAND ----------
-
-#hour table (doesn't work with merge)
-sourceTable = "{}.{}".format(db_name, CDR_table)
-targetTable = "{}.{}".format(db_name, "CDR_hour_gold")
+#hour table 
+sourceTable = "{}.{}".format(db_name, CDR_table_ml)
+targetTable = "{}.{}".format(db_name, CDR_table_hour_ml)
 windowTime = "1 hour"
 towersTable = "{}.{}".format(db_name, cell_tower_table)
 createWindowTable(sourceTable, targetTable, windowTime, towersTable)
@@ -270,61 +252,7 @@ createWindowTable(sourceTable, targetTable, windowTime, towersTable)
 
 #day table
 sourceTable = "{}.{}".format(db_name, CDR_table)
-targetTable = "{}.{}".format(db_name, "CDR_day_gold")
+targetTable = "{}.{}".format(db_name, CDR_table_day_ml)
 windowTime = "1 day"
 towersTable = "{}.{}".format(db_name, cell_tower_table)
 createWindowTable(sourceTable, targetTable, windowTime, towersTable)
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC select * from geospatial_tomasz.CDR_day_gold
-
-# COMMAND ----------
-
-df_na_to_fix = spark.sql("select * from geospatial_tomasz.CDR_day_gold")
-
-df_na_to_fix_grouped = df_na_to_fix.groupBy("towerId", "datetime").sum("totalRecords_CDR").withColumn("totalRecords", F.col("sum(totalRecords_CDR)"))
-allDays = weekdays+weekends
-
-display(df_na_to_fix_grouped)
-
-
-# COMMAND ----------
-
-test = df_na_to_fix_grouped.groupBy("towerId").pivot("datetime").sum("totalRecords")
-
-display(test)
-
-# COMMAND ----------
-
-display(test.groupBy("datetime", "towerId").pivot("datetime").sum("sum(totalRecords)"))
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC select sum(coalesce("totalRecords_CDR", 0)) cdr, datetime, towerId from geospatial_tomasz.CDR_day_gold group by datetime, towerId order by datetime asc
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC select * from geospatial_tomasz.CDR_day_gold where towerId = "{8A417596-B6BD-4C47-BE31-869F4159E689}" order by datetime asc
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC select count(*), hour(event_ts) from geospatial_tomasz.telco_CDR_ml group by hour(event_ts)
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC select sum(totalRecords_CDR), hour(datetime) from geospatial_tomasz.CDR_hour_gold group by hour(datetime)
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC DROP TABLE geospatial_tomasz.CDR_hour_gold
-
-# COMMAND ----------
-
-
